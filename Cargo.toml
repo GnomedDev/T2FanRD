@@ -1,0 +1,18 @@
+[package]
+name = "t2fanrd"
+version = "0.1.0"
+edition = "2021"
+
+# See more keys and their definitions at https://doc.rust-lang.org/cargo/reference/manifest.html
+
+[dependencies]
+glob = { version = "0.3.1", default-features = false }
+libc = { version = "0.2.149", default-features = false }
+nonempty = { version = "0.8.1", default-features = false }
+rust-ini = { version = "0.20.0", default-features = false }
+thiserror = { version = "1.0.50", default-features = false }
+signal-hook = { version = "0.3.17", default-features = false }
+
+[profile.release]
+lto = "thin"
+strip = true
