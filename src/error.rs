@@ -49,6 +49,8 @@ pub enum Error {
     #[error("Invalid {0} in config file")]
     InvalidConfigValue(&'static str),
 
+    #[error("Cannot open fan controller handle")]
+    FanOpen(#[source] std::io::Error),
     #[error("Cannot write to fan controller")]
     FanWrite(#[source] std::io::Error),
 

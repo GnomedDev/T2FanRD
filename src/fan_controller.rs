@@ -7,8 +7,8 @@ use crate::{
 
 #[derive(Debug)]
 pub struct FanController {
-    manual_path: PathBuf,
-    output_path: PathBuf,
+    manual_file: std::fs::File,
+    output_file: std::fs::File,
     config: FanConfig,
 
     min_speed: u32,
@@ -35,12 +35,20 @@ impl FanController {
             .parse()
             .map_err(Error::MaxSpeedParse)?;
 
-        let manual_path = join_suffix(path.clone(), "_manual");
-        let output_path = join_suffix(path, "_output");
+        let mut open_options = std::fs::OpenOptions::new();
+        open_options.write(true).truncate(true);
+
+        let manual_file = open_options
+            .open(join_suffix(path.clone(), "_manual"))
+            .map_err(Error::FanOpen)?;
+
+        let output_file = open_options
+            .open(join_suffix(path, "_output"))
+            .map_err(Error::FanOpen)?;
 
         let this = Self {
-            manual_path,
-            output_path,
+            manual_file,
+            output_file,
             config,
             min_speed,
             max_speed,
@@ -51,8 +59,9 @@ impl FanController {
     }
 
     pub fn set_manual(&self, enabled: bool) -> Result<()> {
-        let res = std::fs::write(&self.manual_path, if enabled { "1" } else { "0" });
-        res.map_err(Error::FanWrite)
+        (&self.manual_file)
+            .write_all(if enabled { b"1" } else { b"0" })
+            .map_err(Error::FanWrite)
     }
 
     pub fn set_speed(&self, mut speed: u32) -> Result<()> {
@@ -64,7 +73,9 @@ impl FanController {
 
         print!("\x1b[1K\rSetting fan speed to {speed}");
         let _ = std::io::stdout().lock().flush();
-        std::fs::write(&self.output_path, speed.to_string()).map_err(Error::FanWrite)
+
+        write!(&self.output_file, "{speed}").map_err(Error::FanWrite)?;
+        Ok(())
     }
 
     pub fn calc_speed(&self, temp: u8) -> u32 {
