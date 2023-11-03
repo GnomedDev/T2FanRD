@@ -7,10 +7,10 @@ pub enum Error {
     #[error("CPU temperature sensor not found")]
     NoCpu,
 
-    #[error("Temperature sensor cannot be opened")]
-    TempOpen(#[source] std::io::Error),
     #[error("Temperature sensor cannot be read")]
     TempRead(#[source] std::io::Error),
+    #[error("Temperature sensor cannot be seeked")]
+    TempSeek(#[source] std::io::Error),
     #[error("Temporature sensor cannot be parsed")]
     TempParse(#[source] std::num::ParseIntError),
 

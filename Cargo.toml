@@ -12,6 +12,7 @@ nonempty = { version = "0.8.1", default-features = false }
 rust-ini = { version = "0.20.0", default-features = false }
 thiserror = { version = "1.0.50", default-features = false }
 signal-hook = { version = "0.3.17", default-features = false }
+arraydeque = "0.5.1"
 
 [profile.release]
 lto = "thin"

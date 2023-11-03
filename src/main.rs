@@ -10,19 +10,19 @@
 )]
 
 use std::{
-    collections::VecDeque,
-    io::{ErrorKind, Read},
-    path::{Path, PathBuf},
+    io::{ErrorKind, Read, Seek},
+    path::PathBuf,
     process::ExitCode,
     sync::{atomic::AtomicBool, Arc},
-    time::Duration,
 };
 
-use config::load_fan_configs;
+use arraydeque::ArrayDeque;
+use fan_controller::FanController;
 use nonempty::NonEmpty as NonEmptyVec;
-
-use error::{Error, Result};
 use signal_hook::consts::{SIGINT, SIGTERM};
+
+use config::load_fan_configs;
+use error::{Error, Result};
 
 mod config;
 mod error;
@@ -85,39 +85,44 @@ fn check_pid_file() -> Result<()> {
     std::fs::write(PID_FILE, current_pid).map_err(Error::PidWrite)
 }
 
-fn read_temp_file(temp_path: &Path, temp_buf: &mut String) -> Result<u8> {
-    let mut temp_file = std::fs::File::open(temp_path).map_err(Error::TempOpen)?;
-
+fn read_temp_file(temp_file: &mut std::fs::File, temp_buf: &mut String) -> Result<u8> {
     temp_file
         .read_to_string(temp_buf)
         .map_err(Error::TempRead)?;
+
+    temp_file.rewind().map_err(Error::TempSeek)?;
 
     let temp = temp_buf.trim_end().parse::<u32>().map_err(Error::TempParse);
     temp_buf.clear();
     temp.map(|t| (t / 1000) as u8)
 }
 
-fn find_temp_file(temps: glob::Paths, temp_buf: &mut String) -> Option<PathBuf> {
+fn find_temp_file(temps: glob::Paths, temp_buf: &mut String) -> Option<std::fs::File> {
     for temp_path_res in temps {
         let Ok(temp_path) = temp_path_res else {
             eprintln!("Unable to read glob path");
             continue;
         };
 
-        if read_temp_file(&temp_path, temp_buf).is_ok() {
-            return Some(temp_path);
+        let Ok(mut temp_file) = std::fs::File::open(temp_path) else {
+            eprintln!("Unable to open temperature sensor");
+            continue;
+        };
+
+        if read_temp_file(&mut temp_file, temp_buf).is_ok() {
+            return Some(temp_file);
         }
     }
 
     None
 }
 
-fn find_cpu_temp_file(temp_buf: &mut String) -> Result<PathBuf> {
+fn find_cpu_temp_file(temp_buf: &mut String) -> Result<std::fs::File> {
     let temps = glob::glob("/sys/devices/platform/coretemp.0/hwmon/hwmon*/temp1_input")?;
     find_temp_file(temps, temp_buf).ok_or(Error::NoCpu)
 }
 
-fn find_gpu_temp_file(temp_buf: &mut String) -> Result<Option<PathBuf>> {
+fn find_gpu_temp_file(temp_buf: &mut String) -> Result<Option<std::fs::File>> {
     let temps = glob::glob("/sys/class/drm/card0/device/hwmon/hwmon*/temp1_input")?;
     Ok(find_temp_file(temps, temp_buf))
 }
@@ -132,6 +137,44 @@ fn main() -> ExitCode {
     }
 }
 
+fn start_temp_loop(
+    mut temp_buffer: String,
+    mut cpu_temp_file: std::fs::File,
+    mut gpu_temp_file: Option<std::fs::File>,
+    fans: &NonEmptyVec<FanController>,
+) -> Result<()> {
+    let cancellation_token = Arc::new(AtomicBool::new(false));
+    signal_hook::flag::register(SIGINT, cancellation_token.clone()).map_err(Error::Signal)?;
+    signal_hook::flag::register(SIGTERM, cancellation_token.clone()).map_err(Error::Signal)?;
+
+    let mut temps = ArrayDeque::<u8, 50, arraydeque::Wrapping>::new();
+    while !cancellation_token.load(std::sync::atomic::Ordering::Relaxed) {
+        let cpu_temp = read_temp_file(&mut cpu_temp_file, &mut temp_buffer)?;
+        let temp = if let Some(gpu_temp_file) = &mut gpu_temp_file {
+            let gpu_temp = read_temp_file(gpu_temp_file, &mut temp_buffer)?;
+            if gpu_temp > cpu_temp {
+                gpu_temp
+            } else {
+                cpu_temp
+            }
+        } else {
+            cpu_temp
+        };
+
+        temps.push_back(temp);
+
+        let sum_temp: u16 = temps.iter().map(|t| *t as u16).sum();
+        let mean_temp = sum_temp / (temps.len() as u16);
+        for fan in fans {
+            fan.set_speed(fan.calc_speed(mean_temp as u8))?;
+        }
+
+        std::thread::sleep(std::time::Duration::from_millis(100));
+    }
+
+    Ok(())
+}
+
 fn real_main() -> Result<()> {
     if get_current_euid() != 0 {
         return Err(Error::NotRoot);
@@ -143,51 +186,23 @@ fn real_main() -> Result<()> {
 
     let fan_paths = find_fan_paths()?;
     let fans = load_fan_configs(fan_paths)?;
-    let cpu_temp_path = find_cpu_temp_file(&mut temp_buffer)?;
-    let gpu_temp_path = find_gpu_temp_file(&mut temp_buffer)?;
+    let cpu_temp_file = find_cpu_temp_file(&mut temp_buffer)?;
+    let gpu_temp_file = find_gpu_temp_file(&mut temp_buffer)?;
 
     println!();
     for fan in &fans {
         fan.set_manual(true)?;
     }
 
-    let cancellation_token = Arc::new(AtomicBool::new(false));
-    signal_hook::flag::register(SIGINT, cancellation_token.clone()).map_err(Error::Signal)?;
-    signal_hook::flag::register(SIGTERM, cancellation_token.clone()).map_err(Error::Signal)?;
-
-    let mut temps = VecDeque::with_capacity(5);
-    while !cancellation_token.load(std::sync::atomic::Ordering::Relaxed) {
-        let cpu_temp = read_temp_file(&cpu_temp_path, &mut temp_buffer)?;
-        let temp = if let Some(gpu_temp_path) = &gpu_temp_path {
-            let gpu_temp = read_temp_file(gpu_temp_path, &mut temp_buffer)?;
-            if gpu_temp > cpu_temp {
-                gpu_temp
-            } else {
-                cpu_temp
-            }
-        } else {
-            cpu_temp
-        };
-
-        if temps.len() > 5 {
-            temps.pop_front();
-        }
-
-        temps.push_back(temp);
-
-        let sum_temp: u16 = temps.iter().map(|t| *t as u16).sum();
-        let mean_temp = sum_temp / (temps.len() as u16);
-        for fan in &fans {
-            fan.set_speed(fan.calc_speed(mean_temp as u8))?;
-        }
-
-        std::thread::sleep(Duration::new(1, 0));
-    }
-
+    let res = start_temp_loop(temp_buffer, cpu_temp_file, gpu_temp_file, &fans);
     println!("T2 Fan Daemon is shutting down...");
     for fan in fans {
         fan.set_manual(false)?;
     }
 
-    std::fs::remove_file(PID_FILE).map_err(Error::PidDelete)
+    let pid_res = std::fs::remove_file(PID_FILE).map_err(Error::PidDelete);
+    match (res, pid_res) {
+        (Err(err), _) | (_, Err(err)) => Err(err),
+        (Ok(()), Ok(())) => Ok(()),
+    }
 }
