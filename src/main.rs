@@ -147,6 +147,7 @@ fn start_temp_loop(
     signal_hook::flag::register(SIGINT, cancellation_token.clone()).map_err(Error::Signal)?;
     signal_hook::flag::register(SIGTERM, cancellation_token.clone()).map_err(Error::Signal)?;
 
+    let mut last_temp = 0;
     let mut temps = ArrayDeque::<u8, 50, arraydeque::Wrapping>::new();
     while !cancellation_token.load(std::sync::atomic::Ordering::Relaxed) {
         let cpu_temp = read_temp_file(&mut cpu_temp_file, &mut temp_buffer)?;
@@ -165,11 +166,16 @@ fn start_temp_loop(
 
         let sum_temp: u16 = temps.iter().map(|t| *t as u16).sum();
         let mean_temp = sum_temp / (temps.len() as u16);
-        for fan in fans {
-            fan.set_speed(fan.calc_speed(mean_temp as u8))?;
-        }
+        if mean_temp == last_temp {
+            std::thread::sleep(std::time::Duration::from_secs(1));
+        } else {
+            last_temp = mean_temp;
+            for fan in fans {
+                fan.set_speed(fan.calc_speed(mean_temp as u8))?;
+            }
 
-        std::thread::sleep(std::time::Duration::from_millis(100));
+            std::thread::sleep(std::time::Duration::from_millis(100));
+        }
     }
 
     Ok(())
