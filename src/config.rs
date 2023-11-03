@@ -9,7 +9,7 @@ const CONFIG_FILE: &str = "./t2fand.conf";
 #[cfg(not(debug_assertions))]
 const CONFIG_FILE: &str = "/etc/t2fand.conf";
 
-#[derive(Clone, Copy)]
+#[derive(Clone, Copy, Debug)]
 pub enum SpeedCurve {
     Linear,
     Exponential,
@@ -38,7 +38,7 @@ impl FromStr for SpeedCurve {
     }
 }
 
-#[derive(Clone, Copy)]
+#[derive(Clone, Copy, Debug)]
 pub struct FanConfig {
     pub low_temp: u8,
     pub high_temp: u8,
@@ -91,10 +91,10 @@ impl TryFrom<&ini::Properties> for FanConfig {
 }
 
 fn parse_config_file(file_raw: &str, fan_count: usize) -> Result<Vec<FanConfig>> {
-    let file = ini::Ini::load_from_file(file_raw)?;
+    let file = ini::Ini::load_from_str(file_raw)?;
     let mut configs = Vec::with_capacity(fan_count);
 
-    for i in 0..fan_count {
+    for i in 1..=fan_count {
         let section = file
             .section(Some(format!("Fan{i}")))
             .ok_or(Error::MissingFanConfig(i))?;
@@ -108,7 +108,7 @@ fn parse_config_file(file_raw: &str, fan_count: usize) -> Result<Vec<FanConfig>>
 fn generate_config_file(fan_count: usize) -> Result<Vec<FanConfig>> {
     let mut config_file = ini::Ini::new();
     let mut configs = Vec::with_capacity(fan_count);
-    for i in 0..fan_count {
+    for i in 1..=fan_count {
         let config = FanConfig::default();
         configs.push(config);
 

@@ -4,6 +4,7 @@
     clippy::cast_lossless,
     clippy::cast_possible_truncation,
     clippy::cast_sign_loss,
+    clippy::cast_precision_loss,
     clippy::similar_names,
     clippy::module_name_repetitions
 )]
@@ -27,7 +28,7 @@ mod config;
 mod error;
 mod fan_controller;
 
-#[cfg(not(unix))]
+#[cfg(not(target_os = "linux"))]
 compile_error!("This tool is only developed for Linux systems.");
 
 #[cfg(debug_assertions)]
@@ -41,9 +42,26 @@ fn get_current_euid() -> libc::uid_t {
 }
 
 fn find_fan_paths() -> Result<NonEmptyVec<PathBuf>> {
-    let fans = glob::glob("/sys/devices/*/*/*/*/APP0001:00/fan*")?
+    // APP0001:00/fan1_label
+    let fan = glob::glob("/sys/devices/pci*/*/*/*/APP0001:00/fan*")?
         .filter_map(Result::ok)
-        .filter(|p| p.exists());
+        .find(|p| p.exists())
+        .ok_or(Error::NoFan)?;
+
+    // APP0001:00
+    let first_fan_path = fan.parent().ok_or(Error::NoFan)?;
+    // APP0001:00/fan*_input
+    let fan_glob = first_fan_path.display().to_string() + "/fan*_input";
+    // APP0001:00/fan1
+    let fans = glob::glob(&fan_glob)?
+        .filter_map(Result::ok)
+        .filter_map(|mut path| {
+            let file_name = path.file_name()?.to_str()?;
+            let fan_name = file_name.strip_suffix("_input")?;
+            let fan_name_owned = fan_name.to_owned();
+            path.set_file_name(fan_name_owned);
+            Some(path)
+        });
 
     NonEmptyVec::collect(fans).ok_or(Error::NoFan)
 }
@@ -128,6 +146,7 @@ fn real_main() -> Result<()> {
     let cpu_temp_path = find_cpu_temp_file(&mut temp_buffer)?;
     let gpu_temp_path = find_gpu_temp_file(&mut temp_buffer)?;
 
+    println!();
     for fan in &fans {
         fan.set_manual(true)?;
     }

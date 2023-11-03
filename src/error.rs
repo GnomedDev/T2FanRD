@@ -40,7 +40,7 @@ pub enum Error {
     ConfigParse(
         #[from]
         #[source]
-        ini::Error,
+        ini::ParseError,
     ),
     #[error("Missing Fan{0} in config file")]
     MissingFanConfig(usize),
