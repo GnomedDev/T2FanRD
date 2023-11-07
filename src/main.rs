@@ -167,6 +167,11 @@ fn start_temp_loop(
         let sum_temp: u16 = temps.iter().map(|t| *t as u16).sum();
         let mean_temp = sum_temp / (temps.len() as u16);
         if mean_temp == last_temp {
+            // Avoid messing up the mean due to the longer sleep.
+            for _ in 0..9 {
+                temps.push_back(temp);
+            }
+
             std::thread::sleep(std::time::Duration::from_secs(1));
         } else {
             last_temp = mean_temp;
