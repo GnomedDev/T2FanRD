@@ -1,4 +1,4 @@
-use std::{io::ErrorKind, path::PathBuf, str::FromStr};
+use std::{io::ErrorKind, num::NonZeroUsize, path::PathBuf, str::FromStr};
 
 use nonempty::NonEmpty as NonEmptyVec;
 
@@ -90,11 +90,11 @@ impl TryFrom<&ini::Properties> for FanConfig {
     }
 }
 
-fn parse_config_file(file_raw: &str, fan_count: usize) -> Result<Vec<FanConfig>> {
+fn parse_config_file(file_raw: &str, fan_count: NonZeroUsize) -> Result<Vec<FanConfig>> {
     let file = ini::Ini::load_from_str(file_raw)?;
-    let mut configs = Vec::with_capacity(fan_count);
+    let mut configs = Vec::with_capacity(fan_count.get());
 
-    for i in 1..=fan_count {
+    for i in 1..=fan_count.get() {
         let section = file
             .section(Some(format!("Fan{i}")))
             .ok_or(Error::MissingFanConfig(i))?;
@@ -105,10 +105,10 @@ fn parse_config_file(file_raw: &str, fan_count: usize) -> Result<Vec<FanConfig>>
     Ok(configs)
 }
 
-fn generate_config_file(fan_count: usize) -> Result<Vec<FanConfig>> {
+fn generate_config_file(fan_count: NonZeroUsize) -> Result<Vec<FanConfig>> {
     let mut config_file = ini::Ini::new();
-    let mut configs = Vec::with_capacity(fan_count);
-    for i in 1..=fan_count {
+    let mut configs = Vec::with_capacity(fan_count.get());
+    for i in 1..=fan_count.get() {
         let config = FanConfig::default();
         configs.push(config);
 
@@ -124,16 +124,18 @@ fn generate_config_file(fan_count: usize) -> Result<Vec<FanConfig>> {
 }
 
 pub fn load_fan_configs(fan_paths: NonEmptyVec<PathBuf>) -> Result<NonEmptyVec<FanController>> {
+    let fan_count = fan_paths.len_nonzero();
     let configs = match std::fs::read_to_string(CONFIG_FILE) {
-        Ok(file_raw) => parse_config_file(&file_raw, fan_paths.len())?,
-        Err(err) if err.kind() == ErrorKind::NotFound => generate_config_file(fan_paths.len())?,
+        Ok(file_raw) => parse_config_file(&file_raw, fan_count)?,
+        Err(err) if err.kind() == ErrorKind::NotFound => generate_config_file(fan_count)?,
         Err(err) => return Err(Error::ConfigRead(err)),
     };
 
-    let mut fans = Vec::with_capacity(fan_paths.capacity());
-    for (path, config) in fan_paths.into_iter().zip(configs) {
-        fans.push(FanController::new(path, config)?);
-    }
+    let fans = fan_paths
+        .into_iter()
+        .zip(configs)
+        .map(|(path, config)| FanController::new(path, config))
+        .collect::<Result<_>>()?;
 
     Ok(NonEmptyVec::from_vec(fans).unwrap())
 }
