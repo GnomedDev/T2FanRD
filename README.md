@@ -1,3 +1,3 @@
 # T2FanRD
 
-T2 Fan Daemon rewritten in Rust, currently experimental and will release dragons onto your system.
+Simple Fan Daemon for T2 Macs, rewritten from the [original Python version](https://github.com/NoaHimesaka1873/t2fand).
