@@ -12,7 +12,9 @@ Simple Fan Daemon for T2 Macs, rewritten from the [original Python version](http
 ## Configuration
 Initial configuration will be done automatically.
 
-For manual config, there's four options for each fan.
+For manual config, the config file can be found at `/etc/t2fand.conf`.
+
+There's four options for each fan.
 |        Key        |                            Value                            |
 |:-----------------:|:-----------------------------------------------------------:|
 |      low_temp     |        Temperature that will trigger higher fan speed       |
