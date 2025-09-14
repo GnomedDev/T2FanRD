@@ -2,9 +2,13 @@
 Simple Fan Daemon for T2 Macs.
 
 Rewritten from the [original Python version](https://github.com/NoaHimesaka1873/t2fand).
+
 Rust version created by [GnomedDev](https://github.com/GnomedDev/T2FanRD)
+
 Initial flake created by [soopyc](https://github.com/soopyc/T2FanRD).
+
 Updated with nix configuration support by [ethanmoss1](https://github.com/ethanmoss1).
+
 
 ## Compilation
 `cargo build --release`
