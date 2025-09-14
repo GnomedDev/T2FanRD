@@ -1,6 +1,10 @@
 # T2FanRD
+Simple Fan Daemon for T2 Macs.
 
-Simple Fan Daemon for T2 Macs, rewritten from the [original Python version](https://github.com/NoaHimesaka1873/t2fand).
+Rewritten from the [original Python version](https://github.com/NoaHimesaka1873/t2fand).
+Rust version created by [GnomedDev](https://github.com/GnomedDev/T2FanRD)
+Initial flake created by [soopyc](https://github.com/soopyc/T2FanRD).
+Updated with nix configuration support by [ethanmoss1](https://github.com/ethanmoss1).
 
 ## Compilation
 `cargo build --release`
@@ -32,6 +36,7 @@ Add the flake to you inputs and outputs, ensuring to import the nixosModules.
 Note: a lot of the rest of the flake is missing, make sure you understand the basic structure of a flake first.
 
 ## Configuration
+### Config File
 Initial configuration will be done automatically.
 
 For manual config, the config file can be found at `/etc/t2fand.conf`.
