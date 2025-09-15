@@ -9,17 +9,17 @@
     let
       system = "x86_64-linux"; # As this is for T2 Macs, only x86_64 needed.
       pkgs = nixpkgs.legacyPackages.${system};
-
-      # The Package Definition
-      t2fanrdPackage = pkgs.rustPlatform.buildRustPackage {
+    in {
+      # This makes the package available to your system configuration.
+      packages.${system}.default = pkgs.rustPlatform.buildRustPackage {
         pname = "t2fanrd";
         version = "0.1.0";
         src = ./.;
         cargoHash = "sha256-FKQYiaOTZxD95AWD2zbVjENzMAPrFl/rzhwbkAgGbx0=";
       };
 
-      # The NixOS module definition.
-      t2fanrdModule = { config, lib, ... }:
+      # This makes the NixOS module available for import.
+      nixosModules.t2fanrd = { config, lib, ... }:
         let
           cfg = config.services.t2fanrd;
 
@@ -83,23 +83,14 @@
                 wantedBy = [ "multi-user.target" ];
                 serviceConfig = {
                   Type = "exec";
-                  ExecStart = "${t2fanrdPackage}/bin/t2fanrd";
+                  ExecStart = "${self.packages.${system}.default}/bin/t2fanrd";
                   Restart = "always";
                 };
                 # https://nixos.org/manual/nixos/stable/options#opt-systemd.services._name_.reloadTriggers
                 restartTriggers = [ config.environment.etc."t2fand.conf".source ];
               };
-
-              environment.systemPackages = [ t2fanrdPackage ];
               environment.etc."t2fand.conf".text = builtins.concatStringsSep "\n" (map fanConfig cfg.fans);
             };
           };
-    in
-      {
-        # This makes the package available to your system configuration.
-        packages.${system}.default = t2fanrdPackage;
-
-        # This makes the NixOS module available for import.
-        nixosModules.t2fanrd = t2fanrdModule;
-      };
+    };
 }
