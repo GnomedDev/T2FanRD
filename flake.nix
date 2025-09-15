@@ -63,22 +63,22 @@
               });
               default = {};
               description = ''
-             An attribute set where each attribute is a fan to configure
-             with its settings.
-            '';
+                An attribute set where each attribute is a fan to configure
+                with its settings.
+              '';
               example = lib.literalExample ''{
-              Fan1 = {
-                low_temp = 40;
-                high_temp = 70;
-                speed_curve = "linear";
-                always_full_speed = false;
-              };
-              Fan2 = {
-                low_temp = 40;
-                high_temp = 70;
-                speed_curve = "linear";
-                always_full_speed = false;
-              };
+                Fan1 = {
+                  low_temp = 40;
+                  high_temp = 70;
+                  speed_curve = "linear";
+                  always_full_speed = false;
+                };
+                Fan2 = {
+                  low_temp = 40;
+                  high_temp = 70;
+                  speed_curve = "linear";
+                  always_full_speed = false;
+                };
               };'';
             };
           };
