@@ -20,6 +20,11 @@
         options.services.t2fanrd = {
           enable = lib.mkEnableOption "t2fanrd daemon to manage fan curves for T2 Macs";
 
+          package = lib.mkOption {
+            type = lib.types.package;
+            default = self.packages.${system}.default;
+            description = "T2fanrd package to use.";
+          };
           config = lib.mkOption {
             type = lib.types.attrsOf (lib.types.submodule {
               options = {
@@ -74,19 +79,18 @@
             };'';
           };
         };
-
-        config = lib.mkIf config.services.t2fanrd.enable {
+      };
+          config = lib.mkIf cfg.enable {
           systemd.services.t2fanrd = {
             description = "T2FanRD daemon to manage the fans on a T2 Mac";
             wantedBy = [ "multi-user.target" ];
             serviceConfig = {
               Type = "exec";
-              ExecStart = "${self.packages.${system}.default}/bin/t2fanrd";
+              ExecStart = "${cfg.package}/bin/t2fanrd";
               Restart = "always";
             };
           };
           environment.etc."t2fand.conf".source = ((pkgs.formats.toml { }).generate "t2fand.conf" config.services.t2fanrd.config);
         };
-      };
     };
 }
