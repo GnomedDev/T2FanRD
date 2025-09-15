@@ -36,6 +36,12 @@
             options.services.t2fanrd = {
               enable = lib.mkEnableOption "t2fanrd daemon to manage fan curves for T2 Macs";
 
+              package = lib.mkOption {
+                type = lib.types.package;
+                default = self.packages.${system}.default;
+                description = "T2fanrd package to use.";
+              };
+
               fans = lib.mkOption {
                 type = lib.types.listOf
                   (lib.types.submodule ({ lib, ... }: {
@@ -83,7 +89,7 @@
                 wantedBy = [ "multi-user.target" ];
                 serviceConfig = {
                   Type = "exec";
-                  ExecStart = "${self.packages.${system}.default}/bin/t2fanrd";
+                  ExecStart = "${cfg.package}/bin/t2fanrd";
                   Restart = "always";
                 };
                 # https://nixos.org/manual/nixos/stable/options#opt-systemd.services._name_.reloadTriggers
