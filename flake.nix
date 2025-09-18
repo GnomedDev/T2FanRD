@@ -90,6 +90,31 @@
                 Type = "exec";
                 ExecStart = "${cfg.package}/bin/t2fanrd";
                 Restart = "always";
+
+                # Taken from the fedora system service
+                # https://github.com/t2linux/fedora/blob/2947fdc909a35f04eb936a4f9c0f33fe4e52d9c2/t2fanrd/t2fanrd.service
+                PrivateTmp = "true";
+                ProtectSystem = "true";
+                ProtectHome = "true";
+                ProtectClock = "true";
+                ProtectControlGroups = "true";
+                ProtectHostname = "true";
+                ProtectKernelLogs = "true";
+                ProtectKernelModules = "true";
+                ProtectProc = "invisible";
+                PrivateDevices = "true";
+                PrivateNetwork = "true";
+                NoNewPrivileges = "true";
+                DevicePolicy = "closed";
+                KeyringMode = "private";
+                LockPersonality = "true";
+                MemoryDenyWriteExecute = "true";
+                PrivateUsers = "yes";
+                RemoveIPC = "yes";
+                RestrictNamespaces = "yes";
+                RestrictRealtime = "yes";
+                RestrictSUIDSGID = "yes";
+                SystemCallArchitectures = "native";
               };
             };
             environment.etc."t2fand.conf".source = ((pkgs.formats.toml { }).generate "t2fand.conf" cfg.config);
