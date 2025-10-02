@@ -11,7 +11,7 @@ Simple Fan Daemon for T2 Macs, rewritten from the [original Python version](http
 2. Setup the executable to be run automatically at startup, like via a [systemd service](https://github.com/t2linux/fedora/blob/2947fdc909a35f04eb936a4f9c0f33fe4e52d9c2/t2fanrd/t2fanrd.service).
 
 ### NixOS
-Add this repo to you flake inputs, adding the `nixosModule` to your imports.
+Add this repo to your flake inputs, and the module `<name-of-input>.nixosModule.t2fanrd` to your imports.
 
 ## Configuration
 ### Standard
@@ -38,6 +38,8 @@ Here's an image to better explain this. (Red: linear, blue: exponential, green: 
 ![Image of fan curve graphs](https://user-images.githubusercontent.com/39993457/233580720-cfdaba12-a2d8-430c-87a2-15209dcfec6d.png)
 
 ### NixOS
-Start the systemd service in your configuration with `services.t2fanrd.enable = true;`.
+Find out how many fans you have (using lm_sensors for example, as in: `$ nix-shell -p lm_sensors --run "sensors | grep fan"`).
 
-Configurations can configured the same as standard with the `services.t2fanrd.config`.
+Configure each fan with `services.t2fanrd.config.<name-of-fan>` using the options from the Standard configuration above. See the example declared with the option in the flake.
+
+Start the systemd service with `services.t2fanrd.enable = true;`.
