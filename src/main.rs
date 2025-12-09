@@ -28,8 +28,8 @@ mod config;
 mod error;
 mod fan_controller;
 
-#[cfg(not(target_os = "linux"))]
-compile_error!("This tool is only developed for Linux systems.");
+// #[cfg(not(target_os = "linux"))]
+// compile_error!("This tool is only developed for Linux systems.");
 
 #[cfg(debug_assertions)]
 const PID_FILE: &str = "t2fand.pid";

@@ -1,4 +1,9 @@
-use std::{io::ErrorKind, num::NonZeroUsize, path::PathBuf, str::FromStr};
+use std::{
+    io::ErrorKind,
+    num::{NonZeroU16, NonZeroUsize},
+    path::PathBuf,
+    str::FromStr,
+};
 
 use nonempty::NonEmpty as NonEmptyVec;
 
@@ -44,6 +49,9 @@ pub struct FanConfig {
     pub high_temp: u8,
     pub speed_curve: SpeedCurve,
     pub always_full_speed: bool,
+
+    pub min_speed_override: Option<NonZeroU16>,
+    pub max_speed_override: Option<NonZeroU16>,
 }
 
 impl FanConfig {
@@ -66,6 +74,8 @@ impl Default for FanConfig {
             high_temp: 75,
             speed_curve: SpeedCurve::Linear,
             always_full_speed: false,
+            min_speed_override: None,
+            max_speed_override: None,
         }
     }
 }
@@ -74,11 +84,19 @@ impl TryFrom<&ini::Properties> for FanConfig {
     type Error = Error;
 
     fn try_from(properties: &ini::Properties) -> Result<Self, Self::Error> {
-        fn get_value<V: FromStr>(properties: &ini::Properties, key: &'static str) -> Result<V> {
-            let value_str = properties.get(key).ok_or(Error::MissingConfigValue(key))?;
-            value_str
-                .parse()
+        fn get_opt_value<V: FromStr>(
+            properties: &ini::Properties,
+            key: &'static str,
+        ) -> Result<Option<V>> {
+            properties
+                .get(key)
+                .map(FromStr::from_str)
+                .transpose()
                 .map_err(|_| Error::InvalidConfigValue(key))
+        }
+
+        fn get_value<V: FromStr>(properties: &ini::Properties, key: &'static str) -> Result<V> {
+            get_opt_value(properties, key)?.ok_or(Error::MissingConfigValue(key))
         }
 
         Ok(Self {
@@ -86,6 +104,8 @@ impl TryFrom<&ini::Properties> for FanConfig {
             high_temp: get_value(properties, "high_temp")?,
             speed_curve: get_value(properties, "speed_curve")?,
             always_full_speed: get_value(properties, "always_full_speed")?,
+            min_speed_override: get_opt_value(properties, "min_speed_override")?.and_then(NonZeroU16::new),
+            max_speed_override: get_opt_value(properties, "max_speed_override")?.and_then(NonZeroU16::new),
         })
     }
 }
