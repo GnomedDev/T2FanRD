@@ -38,14 +38,14 @@
                   options = {
 
                     low_temp = lib.mkOption {
-                      type = lib.types.int;
+                      type = lib.types.ints.between 0 100;
                       default = 55;
                       example = 40;
                       description = "Temperature in Celsius that will trigger a higher fan speed.";
                     };
 
                     high_temp = lib.mkOption {
-                      type = lib.types.int;
+                      type = lib.types.ints.between 0 100;
                       default = 75;
                       example = 80;
                       description = "Temperature in Celsius that will trigger a higher fan speed.";
@@ -60,6 +60,20 @@
                       default = "linear";
                       example = "logarithmic";
                       description = "Sets the fan speed curve.";
+                    };
+
+                    min_speed_override = lib.mkOption {
+                      type = lib.types.ints.u16;
+                      default = 0;
+                      example = "1000";
+                      description = "Overrides the minimum speed of the fan to a higher value, if set.";
+                    };
+
+                    max_speed_override = lib.mkOption {
+                      type = lib.types.ints.u16;
+                      default = 65535;
+                      example = "4000";
+                      description = "Overrides the maximum speed of the fan to a lower value, if set.";
                     };
 
                     always_full_speed = lib.mkOption {
