@@ -149,6 +149,7 @@ fn start_temp_loop(
 
     let mut last_temp = 0;
     let mut temps = ArrayDeque::<u8, 50, arraydeque::Wrapping>::new();
+    let mut was_long_sleep = false;
     while !cancellation_token.load(std::sync::atomic::Ordering::Relaxed) {
         let cpu_temp = read_temp_file(&mut cpu_temp_file, &mut temp_buffer)?;
         let temp = if let Some(gpu_temp_file) = &mut gpu_temp_file {
@@ -163,16 +164,18 @@ fn start_temp_loop(
         };
 
         temps.push_back(temp);
-
-        let sum_temp: u16 = temps.iter().map(|t| *t as u16).sum();
-        let mean_temp = sum_temp / (temps.len() as u16);
-        if mean_temp == last_temp {
+        if was_long_sleep {
             // Avoid messing up the mean due to the longer sleep.
             for _ in 0..9 {
                 temps.push_back(temp);
             }
+        }
 
+        let sum_temp: u16 = temps.iter().map(|t| *t as u16).sum();
+        let mean_temp = sum_temp / (temps.len() as u16);
+        if mean_temp == last_temp {
             std::thread::sleep(std::time::Duration::from_secs(1));
+            was_long_sleep = true;
         } else {
             last_temp = mean_temp;
             for fan in fans {
@@ -180,6 +183,7 @@ fn start_temp_loop(
             }
 
             std::thread::sleep(std::time::Duration::from_millis(100));
+            was_long_sleep = false;
         }
     }
 
