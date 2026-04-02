@@ -59,6 +59,20 @@
                     example = true;
                     description = "If true, the fan will be at max speed regardless of temperature.";
                   };
+
+                  sensor_group = lib.mkOption {
+                      type = lib.types.str;
+                      default = "Average[CPU, GPU]";
+                      example = "One(CPU)";
+                      description = ''
+                        Defines which sensors to use and how to aggregate them.
+                        Supported formats:
+                        - Average[Sensor1, Sensor2]
+                        - Max[Sensor1, Sensor2]
+                        - One(Sensor)
+                      '';
+                  };
+
                 };
               });
               default = {};

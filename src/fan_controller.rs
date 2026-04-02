@@ -78,10 +78,37 @@ impl FanController {
         Ok(())
     }
 
-    pub fn calc_speed(&self, temp: u8) -> u32 {
+    pub fn calc_speed(&self, cpu_temp: u8, gpu_temp: u8) -> u32 {
         if self.config.always_full_speed {
             return self.max_speed;
         }
+
+        let temp = {
+            match &self.config.sensor_group {
+                crate::config::SensorGroup::Average(temp_sensors) => {
+                    temp_sensors
+                        .iter()
+                        .map(|ts| match ts {
+                            crate::config::TempSensor::CPU => cpu_temp,
+                            crate::config::TempSensor::GPU => gpu_temp,
+                        })
+                        .sum::<u8>()
+                        / temp_sensors.len() as u8
+                }
+                crate::config::SensorGroup::Max(temp_sensors) => temp_sensors
+                    .iter()
+                    .map(|ts| match ts {
+                        crate::config::TempSensor::CPU => cpu_temp,
+                        crate::config::TempSensor::GPU => gpu_temp,
+                    })
+                    .max()
+                    .unwrap_or(85),
+                crate::config::SensorGroup::One(temp_sensor) => match temp_sensor {
+                    crate::config::TempSensor::CPU => cpu_temp,
+                    crate::config::TempSensor::GPU => gpu_temp,
+                },
+            }
+        };
 
         if temp <= self.config.low_temp {
             return self.min_speed;

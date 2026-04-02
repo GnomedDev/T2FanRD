@@ -1,4 +1,4 @@
-use std::{io::ErrorKind, num::NonZeroUsize, path::PathBuf, str::FromStr};
+use std::{fmt::Display, io::ErrorKind, num::NonZeroUsize, path::PathBuf, str::FromStr};
 
 use nonempty::NonEmpty as NonEmptyVec;
 
@@ -38,12 +38,87 @@ impl FromStr for SpeedCurve {
     }
 }
 
-#[derive(Clone, Copy, Debug)]
+#[derive(Clone, Debug)]
 pub struct FanConfig {
     pub low_temp: u8,
     pub high_temp: u8,
     pub speed_curve: SpeedCurve,
     pub always_full_speed: bool,
+    pub sensor_group: SensorGroup,
+}
+
+#[derive(Clone, Debug)]
+pub enum SensorGroup {
+    Average(Vec<TempSensor>),
+    Max(Vec<TempSensor>),
+    One(TempSensor),
+}
+
+#[derive(Clone, Copy, Debug)]
+pub enum TempSensor {
+    CPU,
+    GPU,
+}
+
+impl Display for TempSensor {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        match self {
+            TempSensor::CPU => f.write_str("CPU"),
+            TempSensor::GPU => f.write_str("GPU"),
+        }
+    }
+}
+impl FromStr for SensorGroup {
+    type Err = ();
+
+    fn from_str(s: &str) -> Result<Self, Self::Err> {
+        // Handle variants using square brackets: Max[...] and Average[...]
+        if let Some((variant_str, content)) = s.split_once('[') {
+            let sensors_str = content.strip_suffix(']').ok_or(())?;
+
+            let sensors: Vec<TempSensor> = sensors_str
+                .split(',')
+                .filter_map(|item| match item.trim() {
+                    "CPU" => Some(TempSensor::CPU),
+                    "GPU" => Some(TempSensor::GPU),
+                    _ => None,
+                })
+                .collect();
+
+            match variant_str.trim() {
+                "Max" => Ok(SensorGroup::Max(sensors)),
+                "Average" => Ok(SensorGroup::Average(sensors)),
+                _ => Err(()),
+            }
+        }
+        // Handle the variant using parentheses: One(...)
+        else if let Some((variant_str, content)) = s.split_once('(') {
+            let sensor_str = content.strip_suffix(')').ok_or(())?;
+
+            let sensor = match sensor_str.trim() {
+                "CPU" => TempSensor::CPU,
+                "GPU" => TempSensor::GPU,
+                _ => return Err(()),
+            };
+
+            match variant_str.trim() {
+                "One" => Ok(SensorGroup::One(sensor)),
+                _ => Err(()),
+            }
+        } else {
+            Err(())
+        }
+    }
+}
+
+impl std::fmt::Display for SensorGroup {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        match self {
+            SensorGroup::Average(temp_sensors) => write!(f, "Average{:?}", temp_sensors),
+            SensorGroup::Max(temp_sensors) => write!(f, "Max{:?}", temp_sensors),
+            SensorGroup::One(temp_sensor) => write!(f, "One({:?})", temp_sensor),
+        }
+    }
 }
 
 impl FanConfig {
@@ -56,6 +131,7 @@ impl FanConfig {
             .set("high_temp", self.high_temp.to_string())
             .set("speed_curve", self.speed_curve.to_string())
             .set("always_full_speed", self.always_full_speed.to_string())
+            .set("sensor_group", self.sensor_group.to_string())
     }
 }
 
@@ -66,6 +142,7 @@ impl Default for FanConfig {
             high_temp: 75,
             speed_curve: SpeedCurve::Linear,
             always_full_speed: false,
+            sensor_group: SensorGroup::Max(vec![TempSensor::CPU, TempSensor::GPU]),
         }
     }
 }
@@ -86,6 +163,7 @@ impl TryFrom<&ini::Properties> for FanConfig {
             high_temp: get_value(properties, "high_temp")?,
             speed_curve: get_value(properties, "speed_curve")?,
             always_full_speed: get_value(properties, "always_full_speed")?,
+            sensor_group: get_value(properties, "sensor_group")?,
         })
     }
 }
@@ -110,7 +188,7 @@ fn generate_config_file(fan_count: NonZeroUsize) -> Result<Vec<FanConfig>> {
     let mut configs = Vec::with_capacity(fan_count.get());
     for i in 1..=fan_count.get() {
         let config = FanConfig::default();
-        configs.push(config);
+        configs.push(config.clone());
 
         let mut setter = config_file.with_section(Some(format!("Fan{i}")));
         config.write_property(&mut setter);

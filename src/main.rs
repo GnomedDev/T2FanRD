@@ -97,7 +97,8 @@ fn read_temp_file(temp_file: &mut std::fs::File, temp_buf: &mut String) -> Resul
     temp.map(|t| (t / 1000) as u8)
 }
 
-fn find_temp_file(temps: glob::Paths, temp_buf: &mut String) -> Option<std::fs::File> {
+fn find_temp_files(temps: glob::Paths, temp_buf: &mut String) -> Option<Vec<std::fs::File>> {
+    let mut temp_files = vec![];
     for temp_path_res in temps {
         let Ok(temp_path) = temp_path_res else {
             eprintln!("Unable to read glob path");
@@ -110,21 +111,24 @@ fn find_temp_file(temps: glob::Paths, temp_buf: &mut String) -> Option<std::fs::
         };
 
         if read_temp_file(&mut temp_file, temp_buf).is_ok() {
-            return Some(temp_file);
+            temp_files.push(temp_file);
         }
     }
 
-    None
+    match temp_files.is_empty() {
+        true => None,
+        false => Some(temp_files),
+    }
 }
 
-fn find_cpu_temp_file(temp_buf: &mut String) -> Result<std::fs::File> {
-    let temps = glob::glob("/sys/devices/platform/coretemp.0/hwmon/hwmon*/temp1_input")?;
-    find_temp_file(temps, temp_buf).ok_or(Error::NoCpu)
+fn find_cpu_temp_file(temp_buf: &mut String) -> Result<Vec<std::fs::File>> {
+    let temps = glob::glob("/sys/devices/platform/coretemp.0/hwmon/hwmon*/temp*_input")?;
+    find_temp_files(temps, temp_buf).ok_or(Error::NoCpu)
 }
 
-fn find_gpu_temp_file(temp_buf: &mut String) -> Result<Option<std::fs::File>> {
-    let temps = glob::glob("/sys/class/drm/card0/device/hwmon/hwmon*/temp1_input")?;
-    Ok(find_temp_file(temps, temp_buf))
+fn find_gpu_temp_file(temp_buf: &mut String) -> Result<Option<Vec<std::fs::File>>> {
+    let temps = glob::glob("/sys/class/drm/card*/device/hwmon/hwmon*/temp*_input")?;
+    Ok(find_temp_files(temps, temp_buf))
 }
 
 fn main() -> ExitCode {
@@ -139,48 +143,67 @@ fn main() -> ExitCode {
 
 fn start_temp_loop(
     mut temp_buffer: String,
-    mut cpu_temp_file: std::fs::File,
-    mut gpu_temp_file: Option<std::fs::File>,
+    mut cpu_temp_files: Vec<std::fs::File>,
+    mut gpu_temp_files: Option<Vec<std::fs::File>>,
     fans: &NonEmptyVec<FanController>,
 ) -> Result<()> {
     let cancellation_token = Arc::new(AtomicBool::new(false));
     signal_hook::flag::register(SIGINT, cancellation_token.clone()).map_err(Error::Signal)?;
     signal_hook::flag::register(SIGTERM, cancellation_token.clone()).map_err(Error::Signal)?;
 
-    let mut last_temp = 0;
-    let mut temps = ArrayDeque::<u8, 50, arraydeque::Wrapping>::new();
+    let mut cpu_last_temp = 0;
+    let mut gpu_last_temp = 0;
+    let mut cpu_temps = ArrayDeque::<u8, 50, arraydeque::Wrapping>::new();
+    let mut gpu_temps = ArrayDeque::<u8, 50, arraydeque::Wrapping>::new();
     while !cancellation_token.load(std::sync::atomic::Ordering::Relaxed) {
-        let cpu_temp = read_temp_file(&mut cpu_temp_file, &mut temp_buffer)?;
-        let temp = if let Some(gpu_temp_file) = &mut gpu_temp_file {
-            let gpu_temp = read_temp_file(gpu_temp_file, &mut temp_buffer)?;
-            if gpu_temp > cpu_temp {
-                gpu_temp
-            } else {
-                cpu_temp
+        let cpu_temp = {
+            let mut core_temps = vec![];
+            for mut cpu_temp_file in &mut cpu_temp_files {
+                let core_temp = read_temp_file(&mut cpu_temp_file, &mut temp_buffer)?;
+                core_temps.push(core_temp);
             }
+            *core_temps.iter().max().unwrap_or(&85)
+        };
+
+        let gpu_temp = if let Some(gpu_temp_files) = &mut gpu_temp_files {
+            let gpu_temp = {
+                let mut cards_temps = vec![];
+                for mut gpu_temp_file in gpu_temp_files {
+                    let card_temp = read_temp_file(&mut gpu_temp_file, &mut temp_buffer)?;
+                    cards_temps.push(card_temp);
+                }
+                *cards_temps.iter().max().unwrap_or(&85)
+            };
+            gpu_temp
         } else {
             cpu_temp
         };
 
-        temps.push_back(temp);
+        cpu_temps.push_back(cpu_temp);
+        gpu_temps.push_back(gpu_temp);
 
-        let sum_temp: u16 = temps.iter().map(|t| *t as u16).sum();
-        let mean_temp = sum_temp / (temps.len() as u16);
-        if mean_temp == last_temp {
+        let gpu_sum_temp: u16 = gpu_temps.iter().map(|t| *t as u16).sum();
+        let gpu_mean_temp = gpu_sum_temp / (gpu_temps.len() as u16);
+
+        let cpu_sum_temp: u16 = cpu_temps.iter().map(|t| *t as u16).sum();
+        let cpu_mean_temp = cpu_sum_temp / (cpu_temps.len() as u16);
+
+        if cpu_mean_temp == cpu_last_temp && gpu_mean_temp == gpu_last_temp {
             // Avoid messing up the mean due to the longer sleep.
             for _ in 0..9 {
-                temps.push_back(temp);
+                cpu_temps.push_back(cpu_temp);
+                gpu_temps.push_back(gpu_temp);
             }
-
             std::thread::sleep(std::time::Duration::from_secs(1));
-        } else {
-            last_temp = mean_temp;
-            for fan in fans {
-                fan.set_speed(fan.calc_speed(mean_temp as u8))?;
-            }
-
-            std::thread::sleep(std::time::Duration::from_millis(100));
         }
+
+        cpu_last_temp = cpu_mean_temp;
+        gpu_last_temp = gpu_mean_temp;
+
+        for fan in fans {
+            fan.set_speed(fan.calc_speed(cpu_mean_temp as u8, gpu_mean_temp as u8))?;
+        }
+        std::thread::sleep(std::time::Duration::from_millis(100));
     }
 
     Ok(())

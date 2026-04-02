@@ -26,6 +26,17 @@ There's four options for each fan.
 |     high_temp     |         Temperature that will trigger max fan speed         |
 |    speed_curve    |   Three options present. Will be explained in table below.  |
 | always_full_speed | if set "true", the fan will be at max speed no matter what. |
+|   sensor_group    | Three options: One(*sensor*), Max[*sensor0*, *sensor1*] or Average[*sensor0*, *sensor1*]. See table below for available sensors    |
+
+
+
+For `sensors`, there's 2 options.
+|        Key        |                            Value                            |
+|:-----------------:|:-----------------------------------------------------------:|
+|      CPU          |        Temperature average of all CPU cores                 |
+|      GPU          |        Temperature average of all GPU cards                 |
+
+
 
 For `speed_curve`, there's three options.
 |     Key     |                   Value                   |
