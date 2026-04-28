@@ -1,4 +1,7 @@
-use std::{io::Write, path::PathBuf};
+use std::{
+    io::{IsTerminal, Write},
+    path::PathBuf,
+};
 
 use crate::{
     config::{FanConfig, SpeedCurve},
@@ -71,8 +74,13 @@ impl FanController {
             speed = self.max_speed;
         }
 
-        print!("\x1b[1K\rSetting fan speed to {speed}");
-        let _ = std::io::stdout().lock().flush();
+        {
+            let mut stdout = std::io::stdout().lock();
+            if stdout.is_terminal() {
+                print!("\x1b[1K\rSetting fan speed to {speed}");
+                let _ = stdout.flush();
+            }
+        }
 
         write!(&self.output_file, "{speed}").map_err(Error::FanWrite)?;
         Ok(())
