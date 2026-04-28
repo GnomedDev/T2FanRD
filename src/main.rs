@@ -79,7 +79,7 @@ fn check_pid_file() -> Result<()> {
         }
         Err(err) if err.kind() == ErrorKind::NotFound => {}
         Err(err) => return Err(Error::PidRead(err)),
-    };
+    }
 
     let current_pid = std::process::id().to_string();
     std::fs::write(PID_FILE, current_pid).map_err(Error::PidWrite)
