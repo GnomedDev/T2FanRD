@@ -11,10 +11,10 @@ repository = "https://github.com/GnomedDev/T2FanRD"
 [dependencies]
 glob = { version = "0.3.1", default-features = false }
 libc = { version = "0.2.149", default-features = false }
-nonempty = { version = "0.10.0", default-features = false }
+nonempty = { version = "0.12.0", default-features = false }
 rust-ini = { version = "0.21.0", default-features = false }
-thiserror = { version = "1.0.50", default-features = false }
-signal-hook = { version = "0.3.17", default-features = false }
+thiserror = { version = "2.0.18", default-features = false }
+signal-hook = { version = "0.4.4", default-features = false }
 arraydeque = "0.5.1"
 
 [profile.release]
