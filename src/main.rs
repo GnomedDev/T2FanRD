@@ -151,6 +151,16 @@ fn start_temp_loop(
     let mut temps = ArrayDeque::<u8, 50, arraydeque::Wrapping>::new();
     let mut was_long_sleep = false;
     while !cancellation_token.load(std::sync::atomic::Ordering::Relaxed) {
+        // The SMC drops manual mode on resume from sleep; if that happened,
+        // take control back and make sure the speed is re-applied below.
+        for fan in fans {
+            if !fan.is_manual()? {
+                eprintln!("Fan manual mode was reset (resume from sleep?), re-enabling");
+                fan.set_manual(true)?;
+                last_temp = 0;
+            }
+        }
+
         let cpu_temp = read_temp_file(&mut cpu_temp_file, &mut temp_buffer)?;
         let temp = if let Some(gpu_temp_file) = &mut gpu_temp_file {
             let gpu_temp = read_temp_file(gpu_temp_file, &mut temp_buffer)?;
