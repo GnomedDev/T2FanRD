@@ -1,5 +1,5 @@
 use std::{
-    io::{IsTerminal, Write},
+    io::{IsTerminal, Read, Seek, Write},
     path::PathBuf,
 };
 
@@ -38,14 +38,17 @@ impl FanController {
             .parse()
             .map_err(Error::MaxSpeedParse)?;
 
-        let mut open_options = std::fs::OpenOptions::new();
-        open_options.write(true).truncate(true);
-
-        let manual_file = open_options
+        // The manual flag is also read back every loop iteration, as the SMC
+        // resets it to 0 on resume from sleep.
+        let manual_file = std::fs::OpenOptions::new()
+            .read(true)
+            .write(true)
             .open(join_suffix(path.clone(), "_manual"))
             .map_err(Error::FanOpen)?;
 
-        let output_file = open_options
+        let output_file = std::fs::OpenOptions::new()
+            .write(true)
+            .truncate(true)
             .open(join_suffix(path, "_output"))
             .map_err(Error::FanOpen)?;
 
@@ -65,6 +68,19 @@ impl FanController {
         (&self.manual_file)
             .write_all(if enabled { b"1" } else { b"0" })
             .map_err(Error::FanWrite)
+    }
+
+    /// Reads back whether the fan is still under manual (daemon) control.
+    ///
+    /// The T2 SMC silently flips `fan*_manual` back to `0` after the system
+    /// resumes from sleep, at which point every `fan*_output` write is ignored
+    /// and the firmware runs the fans at full speed.
+    pub fn is_manual(&self) -> Result<bool> {
+        let mut buf = [0u8; 1];
+        let mut manual_file = &self.manual_file;
+        manual_file.rewind().map_err(Error::FanRead)?;
+        let read = manual_file.read(&mut buf).map_err(Error::FanRead)?;
+        Ok(read == 1 && buf[0] == b'1')
     }
 
     pub fn set_speed(&self, mut speed: u32) -> Result<()> {
