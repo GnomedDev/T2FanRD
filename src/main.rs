@@ -50,33 +50,36 @@ fn join_suffix(mut path: PathBuf, suffix: &str) -> PathBuf {
 #[derive(Debug, Clone)]
 enum FanPath {
     AppleSmc(PathBuf),
+    Hwmon(PathBuf),
 }
 
 impl FanPath {
     pub fn min_speed_path(&self) -> PathBuf {
         match self {
-            FanPath::AppleSmc(path) => join_suffix(path.clone(), "_min"),
+            FanPath::AppleSmc(path) | FanPath::Hwmon(path) => join_suffix(path.clone(), "_min"),
         }
     }
     pub fn max_speed_path(&self) -> PathBuf {
         match self {
-            FanPath::AppleSmc(path) => join_suffix(path.clone(), "_max"),
+            FanPath::AppleSmc(path) | FanPath::Hwmon(path) => join_suffix(path.clone(), "_max"),
         }
     }
     pub fn input_path(&self) -> PathBuf {
         match self {
             FanPath::AppleSmc(path) => join_suffix(path.clone(), "_output"),
+            FanPath::Hwmon(path) => join_suffix(path.clone(), "_target"),
         }
     }
     pub fn manual_path(&self) -> Option<PathBuf> {
         match self {
             FanPath::AppleSmc(path) => Some(join_suffix(path.clone(), "_manual")),
+            FanPath::Hwmon(_) => None,
         }
     }
 }
 
 fn find_fan_paths() -> Result<NonEmptyVec<FanPath>> {
-    let fans = glob::glob("/sys/devices/pci*/*/*/*/APP0001:00/fan*_input")?
+    let applesmc_fans = glob::glob("/sys/devices/pci*/*/*/*/APP0001:00/fan*_input")?
         .filter_map(Result::ok)
         .filter_map(|mut path| {
             let file_name = path.file_name()?.to_str()?;
@@ -85,8 +88,16 @@ fn find_fan_paths() -> Result<NonEmptyVec<FanPath>> {
             path.set_file_name(fan_name_owned);
             Some(FanPath::AppleSmc(path))
         });
-
-    NonEmptyVec::collect(fans).ok_or(Error::NoFan)
+    let hwmon_fans = glob::glob("/sys/class/hwmon/hwmon*/fan*_input")?
+        .filter_map(Result::ok)
+        .filter_map(|mut path| {
+            let file_name = path.file_name()?.to_str()?;
+            let fan_name = file_name.strip_suffix("_input")?;
+            let fan_name_owned = fan_name.to_owned();
+            path.set_file_name(fan_name_owned);
+            Some(FanPath::Hwmon(path))
+        });
+    NonEmptyVec::collect(applesmc_fans.chain(hwmon_fans)).ok_or(Error::NoFan)
 }
 
 fn check_pid_file() -> Result<()> {
