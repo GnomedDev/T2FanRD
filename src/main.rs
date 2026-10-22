@@ -90,6 +90,12 @@ fn find_fan_paths() -> Result<NonEmptyVec<FanPath>> {
         });
     let hwmon_fans = glob::glob("/sys/class/hwmon/hwmon*/fan*_input")?
         .filter_map(Result::ok)
+        .filter(|p| {
+            p.parent()
+                .map(|p| p.join("name"))
+                .and_then(|p| std::fs::read_to_string(p).ok())
+                .is_none_or(|p| p.trim() != "amdgpu")
+        })
         .filter_map(|mut path| {
             let file_name = path.file_name()?.to_str()?;
             let fan_name = file_name.strip_suffix("_input")?;
