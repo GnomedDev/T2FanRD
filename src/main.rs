@@ -10,7 +10,7 @@
 )]
 
 use std::{
-    io::{ErrorKind, Read, Seek},
+    io::{ErrorKind, Read, Seek, Write},
     path::PathBuf,
     process::ExitCode,
     sync::{atomic::AtomicBool, Arc},
@@ -230,6 +230,20 @@ fn start_temp_loop(
     Ok(())
 }
 
+const MACSMC_MANUAL_FILE: &str = "/sys/module/macsmc_hwmon/parameters/fan_control";
+fn enable_macsmc_manual_support() -> Result<()> {
+    if let Ok(true) = std::fs::exists(MACSMC_MANUAL_FILE) {
+        std::fs::OpenOptions::new()
+            .write(true)
+            .open(MACSMC_MANUAL_FILE)
+            .map_err(Error::MacSmcManualToggle)?
+            .write_all("1".as_bytes())
+            .map_err(Error::MacSmcManualToggle)?;
+        println!("Enabled macsmc fan control support");
+    }
+    Ok(())
+}
+
 fn real_main() -> Result<()> {
     if get_current_euid() != 0 {
         return Err(Error::NotRoot);
@@ -245,6 +259,7 @@ fn real_main() -> Result<()> {
     let gpu_temp_file = find_gpu_temp_file(&mut temp_buffer)?;
 
     println!();
+    enable_macsmc_manual_support()?;
     for fan in &fans {
         fan.set_manual(true)?;
     }
