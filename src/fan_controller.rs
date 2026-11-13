@@ -1,16 +1,14 @@
-use std::{
-    io::{IsTerminal, Write},
-    path::PathBuf,
-};
+use std::io::{IsTerminal, Write};
 
 use crate::{
     config::{FanConfig, SpeedCurve},
     error::{Error, Result},
+    FanPath,
 };
 
 #[derive(Debug)]
 pub struct FanController {
-    manual_file: std::fs::File,
+    manual_file: Option<std::fs::File>,
     output_file: std::fs::File,
     config: FanConfig,
 
@@ -19,20 +17,14 @@ pub struct FanController {
 }
 
 impl FanController {
-    pub fn new(path: PathBuf, config: FanConfig) -> Result<Self> {
-        fn join_suffix(mut path: PathBuf, suffix: &str) -> PathBuf {
-            let file_name = path.file_name().unwrap().to_str().unwrap();
-            path.set_file_name(format!("{file_name}{suffix}"));
-            path
-        }
-
-        let min_speed = std::fs::read_to_string(join_suffix(path.clone(), "_min"))
+    pub fn new(path: &FanPath, config: FanConfig) -> Result<Self> {
+        let min_speed = std::fs::read_to_string(path.min_speed_path())
             .map_err(Error::MinSpeedRead)?
             .trim()
             .parse()
             .map_err(Error::MinSpeedParse)?;
 
-        let max_speed = std::fs::read_to_string(join_suffix(path.clone(), "_max"))
+        let max_speed = std::fs::read_to_string(path.max_speed_path())
             .map_err(Error::MaxSpeedRead)?
             .trim_end()
             .parse()
@@ -41,12 +33,14 @@ impl FanController {
         let mut open_options = std::fs::OpenOptions::new();
         open_options.write(true).truncate(true);
 
-        let manual_file = open_options
-            .open(join_suffix(path.clone(), "_manual"))
+        let manual_file = path
+            .manual_path()
+            .map(|p| open_options.open(p))
+            .transpose()
             .map_err(Error::FanOpen)?;
 
         let output_file = open_options
-            .open(join_suffix(path, "_output"))
+            .open(path.input_path())
             .map_err(Error::FanOpen)?;
 
         let this = Self {
@@ -62,8 +56,11 @@ impl FanController {
     }
 
     pub fn set_manual(&self, enabled: bool) -> Result<()> {
-        (&self.manual_file)
-            .write_all(if enabled { b"1" } else { b"0" })
+        self.manual_file
+            .as_ref()
+            .map_or(Ok(()), |mut p| {
+                (&mut p).write_all(if enabled { b"1" } else { b"0" })
+            })
             .map_err(Error::FanWrite)
     }
 

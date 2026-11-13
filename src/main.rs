@@ -10,7 +10,7 @@
 )]
 
 use std::{
-    io::{ErrorKind, Read, Seek},
+    io::{ErrorKind, Read, Seek, Write},
     path::PathBuf,
     process::ExitCode,
     sync::{atomic::AtomicBool, Arc},
@@ -41,29 +41,69 @@ fn get_current_euid() -> libc::uid_t {
     unsafe { libc::geteuid() }
 }
 
-fn find_fan_paths() -> Result<NonEmptyVec<PathBuf>> {
-    // APP0001:00/fan1_label
-    let fan = glob::glob("/sys/devices/pci*/*/*/*/APP0001:00/fan*")?
-        .filter_map(Result::ok)
-        .find(|p| p.exists())
-        .ok_or(Error::NoFan)?;
+fn join_suffix(mut path: PathBuf, suffix: &str) -> PathBuf {
+    let file_name = path.file_name().unwrap().to_str().unwrap();
+    path.set_file_name(format!("{file_name}{suffix}"));
+    path
+}
 
-    // APP0001:00
-    let first_fan_path = fan.parent().ok_or(Error::NoFan)?;
-    // APP0001:00/fan*_input
-    let fan_glob = first_fan_path.display().to_string() + "/fan*_input";
-    // APP0001:00/fan1
-    let fans = glob::glob(&fan_glob)?
+#[derive(Debug, Clone)]
+enum FanPath {
+    AppleSmc(PathBuf),
+    Hwmon(PathBuf),
+}
+
+impl FanPath {
+    pub fn min_speed_path(&self) -> PathBuf {
+        match self {
+            FanPath::AppleSmc(path) | FanPath::Hwmon(path) => join_suffix(path.clone(), "_min"),
+        }
+    }
+    pub fn max_speed_path(&self) -> PathBuf {
+        match self {
+            FanPath::AppleSmc(path) | FanPath::Hwmon(path) => join_suffix(path.clone(), "_max"),
+        }
+    }
+    pub fn input_path(&self) -> PathBuf {
+        match self {
+            FanPath::AppleSmc(path) => join_suffix(path.clone(), "_output"),
+            FanPath::Hwmon(path) => join_suffix(path.clone(), "_target"),
+        }
+    }
+    pub fn manual_path(&self) -> Option<PathBuf> {
+        match self {
+            FanPath::AppleSmc(path) => Some(join_suffix(path.clone(), "_manual")),
+            FanPath::Hwmon(_) => None,
+        }
+    }
+}
+
+fn find_fan_paths() -> Result<NonEmptyVec<FanPath>> {
+    let applesmc_fans = glob::glob("/sys/devices/pci*/*/*/*/APP0001:00/fan*_input")?
         .filter_map(Result::ok)
         .filter_map(|mut path| {
             let file_name = path.file_name()?.to_str()?;
             let fan_name = file_name.strip_suffix("_input")?;
             let fan_name_owned = fan_name.to_owned();
             path.set_file_name(fan_name_owned);
-            Some(path)
+            Some(FanPath::AppleSmc(path))
         });
-
-    NonEmptyVec::collect(fans).ok_or(Error::NoFan)
+    let hwmon_fans = glob::glob("/sys/class/hwmon/hwmon*/fan*_input")?
+        .filter_map(Result::ok)
+        .filter(|p| {
+            p.parent()
+                .map(|p| p.join("name"))
+                .and_then(|p| std::fs::read_to_string(p).ok())
+                .is_none_or(|p| p.trim() != "amdgpu")
+        })
+        .filter_map(|mut path| {
+            let file_name = path.file_name()?.to_str()?;
+            let fan_name = file_name.strip_suffix("_input")?;
+            let fan_name_owned = fan_name.to_owned();
+            path.set_file_name(fan_name_owned);
+            Some(FanPath::Hwmon(path))
+        });
+    NonEmptyVec::collect(applesmc_fans.chain(hwmon_fans)).ok_or(Error::NoFan)
 }
 
 fn check_pid_file() -> Result<()> {
@@ -190,6 +230,20 @@ fn start_temp_loop(
     Ok(())
 }
 
+const MACSMC_MANUAL_FILE: &str = "/sys/module/macsmc_hwmon/parameters/fan_control";
+fn enable_macsmc_manual_support() -> Result<()> {
+    if let Ok(true) = std::fs::exists(MACSMC_MANUAL_FILE) {
+        std::fs::OpenOptions::new()
+            .write(true)
+            .open(MACSMC_MANUAL_FILE)
+            .map_err(Error::MacSmcManualToggle)?
+            .write_all("1".as_bytes())
+            .map_err(Error::MacSmcManualToggle)?;
+        println!("Enabled macsmc fan control support");
+    }
+    Ok(())
+}
+
 fn real_main() -> Result<()> {
     if get_current_euid() != 0 {
         return Err(Error::NotRoot);
@@ -205,6 +259,7 @@ fn real_main() -> Result<()> {
     let gpu_temp_file = find_gpu_temp_file(&mut temp_buffer)?;
 
     println!();
+    enable_macsmc_manual_support()?;
     for fan in &fans {
         fan.set_manual(true)?;
     }
