@@ -74,13 +74,6 @@ impl TryFrom<&ini::Properties> for FanConfig {
     type Error = Error;
 
     fn try_from(properties: &ini::Properties) -> Result<Self, Self::Error> {
-        fn get_value<V: FromStr>(properties: &ini::Properties, key: &'static str) -> Result<V> {
-            let value_str = properties.get(key).ok_or(Error::MissingConfigValue(key))?;
-            value_str
-                .parse()
-                .map_err(|_| Error::InvalidConfigValue(key))
-        }
-
         Ok(Self {
             low_temp: get_value(properties, "low_temp")?,
             high_temp: get_value(properties, "high_temp")?,
@@ -88,6 +81,52 @@ impl TryFrom<&ini::Properties> for FanConfig {
             always_full_speed: get_value(properties, "always_full_speed")?,
         })
     }
+}
+
+/// An extra temperature sensor, configured in a `[SensorN]` section. Every fan
+/// runs at the highest speed asked for by the CPU/GPU curve of its `[FanN]`
+/// section and by the curve of each extra sensor.
+#[derive(Clone, Debug)]
+pub struct SensorConfig {
+    pub name: String,
+    pub path: String,
+    pub low_temp: u8,
+    pub high_temp: u8,
+    pub speed_curve: SpeedCurve,
+}
+
+impl SensorConfig {
+    fn try_from_section(name: String, properties: &ini::Properties) -> Result<Self> {
+        let path = properties
+            .get("path")
+            .ok_or(Error::MissingConfigValue("path"))?
+            .to_owned();
+        let low_temp = get_value(properties, "low_temp")?;
+        let high_temp = get_value(properties, "high_temp")?;
+        let speed_curve = match properties.get("speed_curve") {
+            Some(_) => get_value(properties, "speed_curve")?,
+            None => SpeedCurve::Linear,
+        };
+
+        if low_temp >= high_temp {
+            return Err(Error::InvalidConfigValue("high_temp"));
+        }
+
+        Ok(Self {
+            name,
+            path,
+            low_temp,
+            high_temp,
+            speed_curve,
+        })
+    }
+}
+
+fn get_value<V: FromStr>(properties: &ini::Properties, key: &'static str) -> Result<V> {
+    let value_str = properties.get(key).ok_or(Error::MissingConfigValue(key))?;
+    value_str
+        .parse()
+        .map_err(|_| Error::InvalidConfigValue(key))
 }
 
 fn parse_config_file(file_raw: &str, fan_count: NonZeroUsize) -> Result<Vec<FanConfig>> {
@@ -138,4 +177,28 @@ pub fn load_fan_configs(fan_paths: NonEmptyVec<PathBuf>) -> Result<NonEmptyVec<F
         .collect::<Result<_>>()?;
 
     Ok(NonEmptyVec::from_vec(fans).unwrap())
+}
+
+/// Reads the optional `[Sensor1]`, `[Sensor2]`, ... sections, stopping at the
+/// first missing number. No config file, or no such sections, means no extra
+/// sensors and the daemon behaves as before.
+pub fn load_sensor_configs() -> Result<Vec<SensorConfig>> {
+    let file_raw = match std::fs::read_to_string(CONFIG_FILE) {
+        Ok(file_raw) => file_raw,
+        Err(err) if err.kind() == ErrorKind::NotFound => return Ok(Vec::new()),
+        Err(err) => return Err(Error::ConfigRead(err)),
+    };
+
+    let file = ini::Ini::load_from_str(&file_raw)?;
+    let mut sensors = Vec::new();
+    for i in 1.. {
+        let name = format!("Sensor{i}");
+        let Some(section) = file.section(Some(name.as_str())) else {
+            break;
+        };
+
+        sensors.push(SensorConfig::try_from_section(name, section)?);
+    }
+
+    Ok(sensors)
 }
