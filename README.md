@@ -2,6 +2,14 @@
 
 Simple Fan Daemon for T2 Macs, rewritten from the [original Python version](https://github.com/NoaHimesaka1873/t2fand).
 
+## Archived
+
+This repository has been archived due to it's purpose being fulfilled, with recent kernels supporting the standard hwmon interface.
+
+Standard userspace fan daemons should work, although `1` needs to be written to `/sys/module/macsmc_hwmon/parameters/fan_control` first.
+
+For those who still want to use the `t2fand` config format or behaviour, see the following fork: https://github.com/sharpenedblade/T2FanRD
+
 ## Compilation
 `cargo build --release`
 
