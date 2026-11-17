@@ -1,6 +1,6 @@
 use std::{
     io::{IsTerminal, Write},
-    path::PathBuf,
+    path::{Path, PathBuf},
 };
 
 use crate::{
@@ -10,7 +10,7 @@ use crate::{
 
 #[derive(Debug)]
 pub struct FanController {
-    manual_file: std::fs::File,
+    manual_file: Option<std::fs::File>,
     output_file: std::fs::File,
     config: FanConfig,
 
@@ -41,12 +41,21 @@ impl FanController {
         let mut open_options = std::fs::OpenOptions::new();
         open_options.write(true).truncate(true);
 
-        let manual_file = open_options
-            .open(join_suffix(path.clone(), "_manual"))
-            .map_err(Error::FanOpen)?;
+        let use_macsmc = Path::new("/sys/module/macsmc_hwmon").exists();
+
+        let manual_file = if use_macsmc {
+            None
+        } else {
+            Some(
+                open_options
+                    .open(join_suffix(path.clone(), "_manual"))
+                    .map_err(Error::FanOpen)?,
+            )
+        };
 
         let output_file = open_options
-            .open(join_suffix(path, "_output"))
+            .open(join_suffix(path, if use_macsmc { "_target" } else { "_output" }))
+
             .map_err(Error::FanOpen)?;
 
         let this = Self {
@@ -62,9 +71,12 @@ impl FanController {
     }
 
     pub fn set_manual(&self, enabled: bool) -> Result<()> {
-        (&self.manual_file)
-            .write_all(if enabled { b"1" } else { b"0" })
-            .map_err(Error::FanWrite)
+        match &self.manual_file {
+            Some(f) => (&*f)
+                .write_all(if enabled { b"1" } else { b"0" })
+                .map_err(Error::FanWrite),
+            None => Ok(()),
+        }
     }
 
     pub fn set_speed(&self, mut speed: u32) -> Result<()> {
@@ -118,5 +130,8 @@ impl FanController {
                     + self.min_speed
             }
         }
+    }
+    pub fn stop(&self) -> Result<()> {
+        write!(&self.output_file, "0").map_err(Error::FanWrite)
     }
 }

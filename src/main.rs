@@ -11,7 +11,7 @@
 
 use std::{
     io::{ErrorKind, Read, Seek},
-    path::PathBuf,
+    path::{Path, PathBuf},
     process::ExitCode,
     sync::{atomic::AtomicBool, Arc},
 };
@@ -35,6 +35,12 @@ compile_error!("This tool is only developed for Linux systems.");
 const PID_FILE: &str = "t2fand.pid";
 #[cfg(not(debug_assertions))]
 const PID_FILE: &str = "/run/t2fand.pid";
+const FAN_CONTROL_PARAM: &str = "/sys/module/macsmc_hwmon/parameters/fan_control";
+
+fn set_fan_control(enabled: bool) -> Result<()> {
+    std::fs::write(FAN_CONTROL_PARAM, if enabled { "1" } else { "0" })
+        .map_err(Error::FanControlWrite)
+}
 
 fn get_current_euid() -> libc::uid_t {
     // SAFETY: FFI call with no preconditions
@@ -43,7 +49,13 @@ fn get_current_euid() -> libc::uid_t {
 
 fn find_fan_paths() -> Result<NonEmptyVec<PathBuf>> {
     // APP0001:00/fan1_label
-    let fan = glob::glob("/sys/devices/pci*/*/*/*/APP0001:00/fan*")?
+    let macsmc_path = if Path::new("/sys/module/macsmc_hwmon").exists() {
+        "/sys/module/macsmc_hwmon/drivers/platform:macsmc-hwmon/macsmc-hwmon/hwmon/*/fan*"
+    } else {
+        "/sys/devices/pci*/*/*/*/APP0001:00/fan*"
+    };
+
+    let fan = glob::glob(macsmc_path)?
         .filter_map(Result::ok)
         .find(|p| p.exists())
         .ok_or(Error::NoFan)?;
@@ -198,6 +210,7 @@ fn real_main() -> Result<()> {
     check_pid_file()?;
 
     let mut temp_buffer = String::new();
+    let use_macsmc = Path::new("/sys/module/macsmc_hwmon").exists();
 
     let fan_paths = find_fan_paths()?;
     let fans = load_fan_configs(fan_paths)?;
@@ -205,14 +218,26 @@ fn real_main() -> Result<()> {
     let gpu_temp_file = find_gpu_temp_file(&mut temp_buffer)?;
 
     println!();
-    for fan in &fans {
-        fan.set_manual(true)?;
+    if use_macsmc {
+        set_fan_control(true)?;
+    } else {
+        for fan in &fans {
+            fan.set_manual(true)?;
+        }
     }
 
     let res = start_temp_loop(temp_buffer, cpu_temp_file, gpu_temp_file, &fans);
     println!("T2 Fan Daemon is shutting down...");
-    for fan in fans {
-        fan.set_manual(false)?;
+    if use_macsmc {
+        let _stop_res = fans
+            .iter()
+            .map(FanController::stop)
+            .fold(Ok(()), |acc, r| acc.and(r));
+        set_fan_control(false)?;
+    } else {
+        for fan in fans {
+            fan.set_manual(false)?;
+        }
     }
 
     let pid_res = std::fs::remove_file(PID_FILE).map_err(Error::PidDelete);
