@@ -21,7 +21,7 @@ use fan_controller::FanController;
 use nonempty::NonEmpty as NonEmptyVec;
 use signal_hook::consts::{SIGINT, SIGTERM};
 
-use config::load_fan_configs;
+use config::{load_fan_configs, load_sensor_configs, SensorConfig};
 use error::{Error, Result};
 
 mod config;
@@ -97,7 +97,10 @@ fn read_temp_file(temp_file: &mut std::fs::File, temp_buf: &mut String) -> Resul
     temp.map(|t| (t / 1000) as u8)
 }
 
-fn find_temp_file(temps: glob::Paths, temp_buf: &mut String) -> Option<std::fs::File> {
+fn find_temp_file(
+    temps: impl Iterator<Item = glob::GlobResult>,
+    temp_buf: &mut String,
+) -> Option<std::fs::File> {
     for temp_path_res in temps {
         let Ok(temp_path) = temp_path_res else {
             eprintln!("Unable to read glob path");
@@ -122,9 +125,102 @@ fn find_cpu_temp_file(temp_buf: &mut String) -> Result<std::fs::File> {
     find_temp_file(temps, temp_buf).ok_or(Error::NoCpu)
 }
 
+fn is_amdgpu_sensor(temp_path: &std::path::Path) -> bool {
+    temp_path
+        .parent()
+        .and_then(|hwmon| std::fs::read_to_string(hwmon.join("name")).ok())
+        .is_some_and(|name| name.trim() == "amdgpu")
+}
+
 fn find_gpu_temp_file(temp_buf: &mut String) -> Result<Option<std::fs::File>> {
-    let temps = glob::glob("/sys/class/drm/card0/device/hwmon/hwmon*/temp1_input")?;
-    Ok(find_temp_file(temps, temp_buf))
+    // The discrete GPU is not always card0: the number depends on probe order,
+    // and on a MacBookPro16,1 the Intel iGPU takes card1 and the AMD dGPU card2.
+    // Look at every card and prefer the amdgpu sensor over anything else.
+    let mut temps: Vec<PathBuf> =
+        glob::glob("/sys/class/drm/card*/device/hwmon/hwmon*/temp1_input")?
+            .filter_map(Result::ok)
+            .collect();
+    temps.sort_by_key(|path| !is_amdgpu_sensor(path));
+    Ok(find_temp_file(temps.into_iter().map(Ok), temp_buf))
+}
+
+type TempHistory = ArrayDeque<u8, 50, arraydeque::Wrapping>;
+
+/// An extra sensor from a `[SensorN]` section. Its path is a glob; all files it
+/// matches are read and the hottest counts, so `/sys/class/nvme/nvme*/hwmon*/temp1_input`
+/// covers every drive whatever its number.
+struct ExtraSensor {
+    config: SensorConfig,
+    files: Vec<std::fs::File>,
+    temps: TempHistory,
+}
+
+impl ExtraSensor {
+    fn open(config: SensorConfig, temp_buf: &mut String) -> Result<Option<Self>> {
+        let mut files = Vec::new();
+        for path in glob::glob(&config.path)
+            .map_err(|_| Error::InvalidConfigValue("path"))?
+            .filter_map(Result::ok)
+        {
+            let Ok(mut file) = std::fs::File::open(&path) else {
+                continue;
+            };
+
+            if read_temp_file(&mut file, temp_buf).is_ok() {
+                println!("{}: using {}", config.name, path.display());
+                files.push(file);
+            }
+        }
+
+        if files.is_empty() {
+            eprintln!(
+                "{}: no readable sensor matches {}, ignoring it",
+                config.name, config.path
+            );
+            return Ok(None);
+        }
+
+        Ok(Some(Self {
+            config,
+            files,
+            temps: TempHistory::new(),
+        }))
+    }
+
+    /// Hottest of the matched files. A file that stops answering (a drive
+    /// removed or reset) is dropped; `None` once none are left.
+    fn read(&mut self, temp_buf: &mut String) -> Option<u8> {
+        let name = &self.config.name;
+        let mut hottest = None;
+        self.files
+            .retain_mut(|file| match read_temp_file(file, temp_buf) {
+                Ok(temp) => {
+                    hottest = hottest.max(Some(temp));
+                    true
+                }
+                Err(err) => {
+                    eprintln!("{name}: a sensor became unreadable ({err}), dropping it");
+                    false
+                }
+            });
+
+        hottest
+    }
+}
+
+fn push_temp(temps: &mut TempHistory, temp: u8, was_long_sleep: bool) {
+    temps.push_back(temp);
+    if was_long_sleep {
+        // Avoid messing up the mean due to the longer sleep.
+        for _ in 0..9 {
+            temps.push_back(temp);
+        }
+    }
+}
+
+fn mean_temp(temps: &TempHistory) -> u8 {
+    let sum_temp: u16 = temps.iter().map(|t| *t as u16).sum();
+    (sum_temp / (temps.len() as u16)) as u8
 }
 
 fn main() -> ExitCode {
@@ -141,47 +237,73 @@ fn start_temp_loop(
     mut temp_buffer: String,
     mut cpu_temp_file: std::fs::File,
     mut gpu_temp_file: Option<std::fs::File>,
+    mut sensors: Vec<ExtraSensor>,
     fans: &NonEmptyVec<FanController>,
 ) -> Result<()> {
     let cancellation_token = Arc::new(AtomicBool::new(false));
     signal_hook::flag::register(SIGINT, cancellation_token.clone()).map_err(Error::Signal)?;
     signal_hook::flag::register(SIGTERM, cancellation_token.clone()).map_err(Error::Signal)?;
 
-    let mut last_temp = 0;
-    let mut temps = ArrayDeque::<u8, 50, arraydeque::Wrapping>::new();
+    let mut last_means = Vec::new();
+    let mut temps = TempHistory::new();
     let mut was_long_sleep = false;
     while !cancellation_token.load(std::sync::atomic::Ordering::Relaxed) {
         let cpu_temp = read_temp_file(&mut cpu_temp_file, &mut temp_buffer)?;
-        let temp = if let Some(gpu_temp_file) = &mut gpu_temp_file {
-            let gpu_temp = read_temp_file(gpu_temp_file, &mut temp_buffer)?;
-            if gpu_temp > cpu_temp {
-                gpu_temp
-            } else {
-                cpu_temp
-            }
-        } else {
-            cpu_temp
-        };
-
-        temps.push_back(temp);
-        if was_long_sleep {
-            // Avoid messing up the mean due to the longer sleep.
-            for _ in 0..9 {
-                temps.push_back(temp);
+        let mut temp = cpu_temp;
+        if let Some(file) = &mut gpu_temp_file {
+            // A discrete GPU can disappear from under us: a reset, a runtime
+            // suspend or a Thunderbolt re-enumeration all invalidate the open
+            // sensor. Losing the GPU reading must not take the daemon down,
+            // because it leaves the fans pinned at whatever speed it wrote
+            // last while the machine keeps heating. Fall back to the CPU
+            // sensor and stop looking at the GPU.
+            match read_temp_file(file, &mut temp_buffer) {
+                Ok(gpu_temp) => temp = temp.max(gpu_temp),
+                Err(err) => {
+                    eprintln!("GPU temperature unreadable ({err}), using the CPU sensor alone");
+                    gpu_temp_file = None;
+                }
             }
         }
 
-        let sum_temp: u16 = temps.iter().map(|t| *t as u16).sum();
-        let mean_temp = sum_temp / (temps.len() as u16);
-        if mean_temp == last_temp {
+        push_temp(&mut temps, temp, was_long_sleep);
+        sensors.retain_mut(|sensor| {
+            if let Some(temp) = sensor.read(&mut temp_buffer) {
+                push_temp(&mut sensor.temps, temp, was_long_sleep);
+                true
+            } else {
+                eprintln!(
+                    "{}: no sensor left, ignoring it from now on",
+                    sensor.config.name
+                );
+                false
+            }
+        });
+
+        let means: Vec<u8> = std::iter::once(mean_temp(&temps))
+            .chain(sensors.iter().map(|sensor| mean_temp(&sensor.temps)))
+            .collect();
+
+        if means == last_means {
             std::thread::sleep(std::time::Duration::from_secs(1));
             was_long_sleep = true;
         } else {
-            last_temp = mean_temp;
             for fan in fans {
-                fan.set_speed(fan.calc_speed(mean_temp as u8))?;
+                let mut speed = fan.calc_speed(means[0]);
+                for (sensor, mean) in sensors.iter().zip(&means[1..]) {
+                    let config = &sensor.config;
+                    speed = speed.max(fan.calc_speed_with(
+                        *mean,
+                        config.low_temp,
+                        config.high_temp,
+                        config.speed_curve,
+                    ));
+                }
+
+                fan.set_speed(speed)?;
             }
 
+            last_means = means;
             std::thread::sleep(std::time::Duration::from_millis(100));
             was_long_sleep = false;
         }
@@ -203,13 +325,17 @@ fn real_main() -> Result<()> {
     let fans = load_fan_configs(fan_paths)?;
     let cpu_temp_file = find_cpu_temp_file(&mut temp_buffer)?;
     let gpu_temp_file = find_gpu_temp_file(&mut temp_buffer)?;
+    let mut sensors = Vec::new();
+    for config in load_sensor_configs()? {
+        sensors.extend(ExtraSensor::open(config, &mut temp_buffer)?);
+    }
 
     println!();
     for fan in &fans {
         fan.set_manual(true)?;
     }
 
-    let res = start_temp_loop(temp_buffer, cpu_temp_file, gpu_temp_file, &fans);
+    let res = start_temp_loop(temp_buffer, cpu_temp_file, gpu_temp_file, sensors, &fans);
     println!("T2 Fan Daemon is shutting down...");
     for fan in fans {
         fan.set_manual(false)?;

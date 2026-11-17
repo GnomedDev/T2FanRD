@@ -91,17 +91,33 @@ impl FanController {
             return self.max_speed;
         }
 
-        if temp <= self.config.low_temp {
+        self.calc_speed_with(
+            temp,
+            self.config.low_temp,
+            self.config.high_temp,
+            self.config.speed_curve,
+        )
+    }
+
+    /// Speed for `temp` on the given curve, scaled to this fan's range.
+    pub fn calc_speed_with(
+        &self,
+        temp: u8,
+        low_temp: u8,
+        high_temp: u8,
+        speed_curve: SpeedCurve,
+    ) -> u32 {
+        if temp <= low_temp {
             return self.min_speed;
         }
-        if temp >= self.config.high_temp {
+        if temp >= high_temp {
             return self.max_speed;
         }
 
         let temp = temp as u32;
-        let low_temp = self.config.low_temp as u32;
-        let high_temp = self.config.high_temp as u32;
-        match self.config.speed_curve {
+        let low_temp = low_temp as u32;
+        let high_temp = high_temp as u32;
+        match speed_curve {
             SpeedCurve::Linear => {
                 ((temp - low_temp) as f32 / (high_temp - low_temp) as f32
                     * (self.max_speed - self.min_speed) as f32) as u32
