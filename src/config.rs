@@ -1,8 +1,8 @@
-use std::{io::ErrorKind, num::NonZeroUsize, path::PathBuf, str::FromStr};
+use std::{io::ErrorKind, num::NonZeroUsize, str::FromStr};
 
 use nonempty::NonEmpty as NonEmptyVec;
 
-use crate::{fan_controller::FanController, Error, Result};
+use crate::{fan_controller::FanController, Error, FanPath, Result};
 
 #[cfg(debug_assertions)]
 const CONFIG_FILE: &str = "./t2fand.conf";
@@ -123,7 +123,7 @@ fn generate_config_file(fan_count: NonZeroUsize) -> Result<Vec<FanConfig>> {
     Ok(configs)
 }
 
-pub fn load_fan_configs(fan_paths: NonEmptyVec<PathBuf>) -> Result<NonEmptyVec<FanController>> {
+pub fn load_fan_configs(fan_paths: NonEmptyVec<FanPath>) -> Result<NonEmptyVec<FanController>> {
     let fan_count = fan_paths.len_nonzero();
     let configs = match std::fs::read_to_string(CONFIG_FILE) {
         Ok(file_raw) => parse_config_file(&file_raw, fan_count)?,
@@ -134,7 +134,7 @@ pub fn load_fan_configs(fan_paths: NonEmptyVec<PathBuf>) -> Result<NonEmptyVec<F
     let fans = fan_paths
         .into_iter()
         .zip(configs)
-        .map(|(path, config)| FanController::new(path, config))
+        .map(|(path, config)| FanController::new(&path, config))
         .collect::<Result<_>>()?;
 
     Ok(NonEmptyVec::from_vec(fans).unwrap())
