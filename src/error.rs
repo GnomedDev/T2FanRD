@@ -53,6 +53,8 @@ pub enum Error {
     FanOpen(#[source] std::io::Error),
     #[error("Cannot write to fan controller")]
     FanWrite(#[source] std::io::Error),
+    #[error("Cannot read from fan controller")]
+    FanRead(#[source] std::io::Error),
 
     #[error("Cannot setup shutdown signals")]
     Signal(#[source] std::io::Error),
